@@ -11,6 +11,15 @@ data_map = {"pitch": "DP_PITCH",
             "roll": "DP_ROLL",
             "sim_z": "SIM_Z"}
 
+acis_states = ["ccd_count", "fep_count", "clocking"]
+
+
+def make_phase(times):
+    # This is the contribution from the variation in the solar
+    # heating due to the Earth's elliptical orbit
+    t_year = (times - time2000) / secs_per_year
+    return np.cos(2.0*np.pi*t_year)
+
 
 def scale_training(train_set, raw_msid_val):
     # normalize data (to be between 0 and 1) and then reshape
@@ -33,7 +42,7 @@ def clean_data(data, cols, pos):
     masked = subset[mask]
     #seperate out the time data
     msid_times = masked['msid_times']
-    raw_set = masked.drop(['msid_times'], axis = 1)
+    raw_set = masked.drop(['msid_times'], axis=1)
     return raw_set, msid_times
 
 #############################################
