@@ -43,6 +43,10 @@ class ACISThermalML(object):
         self.pos = self.cols[2:]
         self.n_features = len(self.pos) + 1
         self.model = None
+        self.scaler_all = None
+        self.scaler_msid = None
+        self.scaler_all_file = "{}_scaler_all.pkl".format(self.msid.lower())
+        self.scaler_msid_file = "{}_scaler_msid.pkl".format(self.msid.lower())
 
     def get_cmd_states(self, datestart, datestop, times):
         tstart = DateTime(datestart).secs - 50.0*328.0
@@ -67,7 +71,7 @@ class ACISThermalML(object):
                 combined_dict[input] = data[data_map[input]].vals
             elif input in states.dtype.names:
                 combined_dict[input] = states[input]
-        return combined_dict
+        return pd.DataFrame(combined_dict)
 
     def get_prediction_data(self, times, T_init, att_data, cmd_states):
         states = interpolate_states(cmd_states, times)
@@ -81,12 +85,17 @@ class ACISThermalML(object):
         return combined_dict
 
     def train_and_fit_model(self, start, stop):
-        train_dict = self.get_fitting_data(start, stop)
-        train_set = pd.DataFrame(train_dict)
+        train_set = self.get_fitting_data(start, stop)
         train_clean_set, train_time = dmf.clean_data(train_set, self.cols, self.pos)
         raw_msid_val = train_clean_set.drop(self.pos, axis=1)
         scaler_all, scaler_msid, scaled_train = \
             dmf.scale_training(train_clean_set, raw_msid_val)
+        self.scaler_all = scaler_all
+        with open(self.scaler_all_file, 'wb') as f:
+            pickle.dump(self.scaler_all, f)
+        self.scaler_msid = scaler_msid
+        with open(self.scaler_msid_file, 'wb') as f:
+            pickle.dump(self.scaler_msid, f)
         shaped_train, begin_int = dmf.shaping_data(scaled_train, self.pos, self.frames)
         shaped_train_full, train_time_full, shaped_val_full, val_time_full = \
             dmf.split_shaped_data(shaped_train, train_time, self.percentage, begin_int)
@@ -126,33 +135,30 @@ class ACISThermalML(object):
         fig.savefig("stats.png", bbox_inches='tight')
         return fig
 
-    def _make_predict(self, predict_inputs, scaler_all_file,
-                      scaler_msid_file, weights_file):
-        scaler_all = pickle.load(open(scaler_all_file, "rb"))
-        scaler_msid = pickle.load(open(scaler_msid_file, "rb"))
+    def _predict_model(self, predict_inputs):
+        if self.scaler_all is None:
+            self.scaler_all = pickle.load(open(self.scaler_all_file, "rb"))
+        if self.scaler_msid is None:
+            self.scaler_msid = pickle.load(open(self.scaler_msid_file, "rb"))
         predict_clean_set, predict_times = dmf.clean_data(predict_inputs, self.cols, self.pos)
-        predict_scaled_set = pd.DataFrame(scaler_all.transform(predict_clean_set),
+        predict_scaled_set = pd.DataFrame(self.scaler_all.transform(predict_clean_set),
                                           columns=predict_clean_set.columns)
         shaped_predict, begin_int_predict = dmf.shaping_data(predict_scaled_set,
                                                              self.pos, self.frames)
         predict_times = predict_times[begin_int_predict:]
-        predict_X, _ = dmf.split_io(shaped_predict, self.frames, self.n_features)
-        predictions = self.model.predict(predict_X)
-        predict_data = np.squeeze(scaler_msid.inverse_transform(predictions))
+        predict_x, _ = dmf.split_io(shaped_predict, self.frames, self.n_features)
+        predictions = self.model.predict(predict_x)
+        predict_data = np.squeeze(self.scaler_msid.inverse_transform(predictions))
         self.write_prediction("temperatures.dat", predict_times, predict_data)
         return predict_times, predict_data
 
-    def make_test(self, start, stop, inputs, scaler_all_file, 
-                  scaler_msid_file, weights_file):
-        predict_inputs = self.get_fitting_data(start, stop, inputs)
-        return self._make_predict(predict_inputs, scaler_all_file,
-                                  scaler_msid_file, weights_file)
+    def test_model(self, start, stop):
+        predict_inputs = self.get_fitting_data(start, stop)
+        return self._predict_model(predict_inputs)
 
-    def make_week_predict(self, times, T_init, att_data, cmd_states, scaler_all_file,
-                          scaler_msid_file, weights_file):
+    def predict_model(self, times, T_init, att_data, cmd_states):
         predict_inputs = self.get_prediction_data(times, T_init, att_data, cmd_states)
-        return self._make_predict(predict_inputs, scaler_all_file,
-                                  scaler_msid_file, weights_file)
+        return self._predict_model(predict_inputs)
 
     def write_prediction(self, filename, predict_times, predict_data):
         from astropy.table import Table
