@@ -101,7 +101,7 @@ class ACISThermalML(object):
         p_W, p_U, p_dense, weight_decay = 0.01, 0.001, 0.0, 1e-6
         # create model
         timesteps, data_dim = train_x.shape[1], train_x.shape[2]
-        checkpoint_path = 'weights_best_{}_yr{}_pW_{}_pU_{}_pdense{}'.format(self.msid, train_year, p_W, p_U, p_dense)
+        checkpoint_path = 'weights_best_{}_pW_{}_pU_{}_pdense{}'.format(self.msid, p_W, p_U, p_dense)
         self.model = create_model(self.n_neurons, timesteps, data_dim, p_W, p_U, 
                                   weight_decay, p_dense)
 
@@ -113,6 +113,7 @@ class ACISThermalML(object):
         history = self.model.fit(train_x, train_y, validation_data=(validate_x, validate_y),
                                  batch_size=self.batch_size, epochs=self.epochs,
                                  callbacks=[checkpointer], shuffle=False, verbose=0)
+
         self.plot_stats(history)
 
     def plot_stats(self, history):
