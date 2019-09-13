@@ -10,9 +10,6 @@ from keras import callbacks
 import pickle
 np.random.seed(0)
 
-inputs = ["pitch", "roll", "sim_z", "ccd_count",
-          "fep_count", "clocking"]
-
 
 def create_model(n_neurons, timesteps, data_dim, p_W, p_U, weight_decay, p_dense):
     from keras.models import Sequential
@@ -54,8 +51,8 @@ class ACISThermalML(object):
         cmd_states = interpolate_states(states, times)
         return cmd_states
 
-    def get_fitting_data(self, start, stop, inputs):
-        msids = [self.msid] + [data_map[input] for input in inputs 
+    def get_fitting_data(self, start, stop):
+        msids = [self.msid] + [data_map[input] for input in self.inputs 
                                if input not in acis_states]
         data = fetch.MSIDset(msids, start, stop, stat='5min',
                              filter_bad=True)
@@ -65,10 +62,10 @@ class ACISThermalML(object):
         combined_dict = {'msid_times': data[self.msid].times,
                          'msid_vals': data[self.msid].vals,
                          'phase': make_phase(data[self.msid].times)}
-        for input in inputs:
+        for input in self.inputs:
             if input in data_map:
                 combined_dict[input] = data[data_map[input]].vals
-            elif input in states:
+            elif input in states.dtype.names:
                 combined_dict[input] = states[input]
         return combined_dict
 
@@ -83,8 +80,8 @@ class ACISThermalML(object):
                 combined_dict[key] = states[key]
         return combined_dict
 
-    def train_and_fit_model(self, start, stop, inputs):
-        train_dict = self.get_fitting_data(start, stop, inputs)
+    def train_and_fit_model(self, start, stop):
+        train_dict = self.get_fitting_data(start, stop)
         train_set = pd.DataFrame(train_dict)
         train_clean_set, train_time = dmf.clean_data(train_set, self.cols, self.pos)
         raw_msid_val = train_clean_set.drop(self.pos, axis=1)
@@ -129,15 +126,14 @@ class ACISThermalML(object):
         fig.savefig("stats.png", bbox_inches='tight')
         return fig
 
-    def make_week_predict(self, times, T_init, att_data, cmd_states, scaler_all_file,
-                          scaler_msid_file, weights_file):
+    def _make_predict(self, predict_inputs, scaler_all_file,
+                      scaler_msid_file, weights_file):
         scaler_all = pickle.load(open(scaler_all_file, "rb"))
         scaler_msid = pickle.load(open(scaler_msid_file, "rb"))
-        predict_inputs = self.get_prediction_data(times, T_init, att_data, cmd_states)
         predict_clean_set, predict_times = dmf.clean_data(predict_inputs, self.cols, self.pos)
         predict_scaled_set = pd.DataFrame(scaler_all.transform(predict_clean_set),
                                           columns=predict_clean_set.columns)
-        shaped_predict, begin_int_predict = dmf.shaping_data(predict_scaled_set, 
+        shaped_predict, begin_int_predict = dmf.shaping_data(predict_scaled_set,
                                                              self.pos, self.frames)
         predict_times = predict_times[begin_int_predict:]
         predict_X, _ = dmf.split_io(shaped_predict, self.frames, self.n_features)
@@ -145,6 +141,18 @@ class ACISThermalML(object):
         predict_data = np.squeeze(scaler_msid.inverse_transform(predictions))
         self.write_prediction("temperatures.dat", predict_times, predict_data)
         return predict_times, predict_data
+
+    def make_test(self, start, stop, inputs, scaler_all_file, 
+                  scaler_msid_file, weights_file):
+        predict_inputs = self.get_fitting_data(start, stop, inputs)
+        return self._make_predict(predict_inputs, scaler_all_file,
+                                  scaler_msid_file, weights_file)
+
+    def make_week_predict(self, times, T_init, att_data, cmd_states, scaler_all_file,
+                          scaler_msid_file, weights_file):
+        predict_inputs = self.get_prediction_data(times, T_init, att_data, cmd_states)
+        return self._make_predict(predict_inputs, scaler_all_file,
+                                  scaler_msid_file, weights_file)
 
     def write_prediction(self, filename, predict_times, predict_data):
         from astropy.table import Table
