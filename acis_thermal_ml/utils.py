@@ -11,7 +11,7 @@ data_map = {"pitch": "DP_PITCH",
             "roll": "DP_ROLL",
             "sim_z": "SIM_Z"}
 
-acis_states = ["ccd_count", "fep_count", "clocking"]
+pwr_states = ["ccd_count", "fep_count", "clocking"]
 
 
 def make_phase(times):

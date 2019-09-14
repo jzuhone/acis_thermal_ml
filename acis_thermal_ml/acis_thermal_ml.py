@@ -1,6 +1,7 @@
 from acis_thermal_ml import utils as dmf
+from .model_run import ModelRun
 from .utils import make_phase, data_map, \
-    acis_states
+    pwr_states
 import pandas as pd
 import numpy as np
 import Ska.engarchive.fetch_sci as fetch
@@ -11,27 +12,10 @@ import pickle
 np.random.seed(0)
 
 
-def create_model(n_neurons, timesteps, data_dim, p_W, p_U, weight_decay, p_dense):
-    from keras.models import Sequential
-    from keras.layers.recurrent import LSTM
-    from keras.layers.core import Dense, Dropout
-    from keras.regularizers import l2
-    # an LSTM model takes as a 3d tensor so we need to reshape our data to fit that
-    # the shape is a 3d tensor with dimensions (batch_size, time_steps, features)
-    # dropout is used for uncertainty calculations
-    model = Sequential()
-    model.add(LSTM(n_neurons, input_shape=(timesteps, data_dim),
-                   kernel_regularizer=l2(weight_decay), U_regularizer=l2(weight_decay),
-                   bias_regularizer=l2(weight_decay), dropout=p_W, recurrent_dropout=p_U))
-    model.add(Dropout(p_dense))
-    model.add(Dense(1, kernel_regularizer=l2(weight_decay), bias_regularizer=l2(weight_decay)))
-    model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
-    return model
-
-
 class ACISThermalML(object):
     def __init__(self, msid, inputs, frames=8, percentage=0.2, epochs=100, 
-                 n_neurons=16, batch_size=512):
+                 n_neurons=16, batch_size=512, p_W=0.01, p_U=0.001, p_dense=0.0,
+                 weight_decay=1.0e-6):
         self.msid = msid.upper()
         self.inputs = inputs
         self.frames = frames
@@ -39,6 +23,10 @@ class ACISThermalML(object):
         self.epochs = epochs
         self.n_neurons = n_neurons
         self.batch_size = batch_size
+        self.p_W = p_W
+        self.p_U = p_U
+        self.p_dense = p_dense
+        self.weight_decay = weight_decay
         self.cols = ['msid_times', 'msid_vals', 'phase'] + self.inputs
         self.pos = self.cols[2:]
         self.n_features = len(self.pos) + 1
@@ -47,6 +35,25 @@ class ACISThermalML(object):
         self.scaler_msid = None
         self.scaler_all_file = "{}_scaler_all.pkl".format(self.msid.lower())
         self.scaler_msid_file = "{}_scaler_msid.pkl".format(self.msid.lower())
+        self.checkpoint_path = 'weights_best_{}_pW_{}_pU_{}_pdense{}'.format(self.msid, p_W, p_U, p_dense)
+        self.model_path = 'model_{}.hdf5'.format(self.msid)
+
+    def create_model(self, n_neurons, timesteps, data_dim, p_W, p_U, weight_decay, p_dense):
+        from keras.models import Sequential
+        from keras.layers.recurrent import LSTM
+        from keras.layers.core import Dense, Dropout
+        from keras.regularizers import l2
+        # an LSTM model takes as a 3d tensor so we need to reshape our data to fit that
+        # the shape is a 3d tensor with dimensions (batch_size, time_steps, features)
+        # dropout is used for uncertainty calculations
+        model = Sequential()
+        model.add(LSTM(n_neurons, input_shape=(timesteps, data_dim),
+                       kernel_regularizer=l2(weight_decay), U_regularizer=l2(weight_decay),
+                       bias_regularizer=l2(weight_decay), dropout=p_W, recurrent_dropout=p_U))
+        model.add(Dropout(p_dense))
+        model.add(Dense(1, kernel_regularizer=l2(weight_decay), bias_regularizer=l2(weight_decay)))
+        model.compile(loss='mean_squared_error', optimizer='adam', metrics=['accuracy'])
+        self.model = model
 
     def get_cmd_states(self, datestart, datestop, times):
         tstart = DateTime(datestart).secs - 50.0*328.0
@@ -57,7 +64,7 @@ class ACISThermalML(object):
 
     def get_fitting_data(self, start, stop):
         msids = [self.msid] + [data_map[input] for input in self.inputs 
-                               if input not in acis_states]
+                               if input not in pwr_states]
         data = fetch.MSIDset(msids, start, stop, stat='5min',
                              filter_bad=True)
         data.interpolate(times=data["DP_PITCH"].times)
@@ -104,21 +111,23 @@ class ACISThermalML(object):
         validate_x, validate_y = dmf.split_io(shaped_val_full, self.frames,
                                               self.n_features)
 
-        p_W, p_U, p_dense, weight_decay = 0.01, 0.001, 0.0, 1e-6
         # create model
         timesteps, data_dim = train_x.shape[1], train_x.shape[2]
-        checkpoint_path = 'weights_best_{}_pW_{}_pU_{}_pdense{}'.format(self.msid, p_W, p_U, p_dense)
-        self.model = create_model(self.n_neurons, timesteps, data_dim, p_W, p_U, 
-                                  weight_decay, p_dense)
+        self.create_model(self.n_neurons, timesteps, data_dim, self.p_W, self.p_U, 
+                          self.weight_decay, self.p_dense)
 
         # checkpoint path to save weights
-        checkpointer = callbacks.ModelCheckpoint(filepath=checkpoint_path,
-                                                 verbose=0, save_best_only=True,
-                                                 save_weights_only=True, mode='min')
+        #checkpointer = callbacks.ModelCheckpoint(filepath=self.checkpoint_path,
+        #                                         verbose=0, save_best_only=True,
+        #                                         save_weights_only=True, mode='min')
 
         history = self.model.fit(train_x, train_y, validation_data=(validate_x, validate_y),
                                  batch_size=self.batch_size, epochs=self.epochs,
-                                 callbacks=[checkpointer], shuffle=False, verbose=0)
+                                 shuffle=False, verbose=0)
+
+                                 #callbacks=[checkpointer], shuffle=False, verbose=0)
+
+        self.model.save(self.model_path)
 
         self.plot_stats(history)
 
@@ -136,6 +145,9 @@ class ACISThermalML(object):
         return fig
 
     def _predict_model(self, predict_inputs):
+        from keras.models import load_model
+        if self.model is None:
+            self.model = load_model(self.model_path)
         if self.scaler_all is None:
             self.scaler_all = pickle.load(open(self.scaler_all_file, "rb"))
         if self.scaler_msid is None:
@@ -154,7 +166,8 @@ class ACISThermalML(object):
 
     def test_model(self, start, stop):
         predict_inputs = self.get_fitting_data(start, stop)
-        return self._predict_model(predict_inputs)
+        predict_times, predict_data = self._predict_model(predict_inputs)
+        return ModelRun(self.msid, predict_times, predict_data, predict_inputs)
 
     def predict_model(self, times, T_init, att_data, cmd_states):
         predict_inputs = self.get_prediction_data(times, T_init, att_data, cmd_states)
