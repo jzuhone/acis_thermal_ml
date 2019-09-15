@@ -74,6 +74,8 @@ class ACISThermalML(object):
                          'msid_vals': data[self.msid].vals,
                          'phase': make_phase(data[self.msid].times)}
         for input in self.inputs:
+            if input == "sim_z":
+                combined_dict[input] = states["simpos"]
             if input in data_map:
                 combined_dict[input] = data[data_map[input]].vals
             elif input in states.dtype.names:
@@ -87,7 +89,9 @@ class ACISThermalML(object):
                          'phase': make_phase(times)}
         combined_dict.update(att_data)
         for key in states:
-            if key in self.inputs:
+            if key == "simpos":
+                combined_dict["sim_z"] = -states["simpos"]/397.7225924607
+            elif key in self.inputs:
                 combined_dict[key] = states[key]
         return combined_dict
 
