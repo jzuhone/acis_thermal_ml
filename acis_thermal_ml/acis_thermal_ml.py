@@ -74,8 +74,6 @@ class ACISThermalML(object):
                          'msid_vals': data[self.msid].vals,
                          'phase': make_phase(data[self.msid].times)}
         for input in self.inputs:
-            if input == "sim_z":
-                combined_dict[input] = states["simpos"]
             if input in data_map:
                 combined_dict[input] = data[data_map[input]].vals
             elif input in states.dtype.names:
