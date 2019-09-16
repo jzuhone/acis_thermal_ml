@@ -9,10 +9,12 @@ class ModelRunComponent(object):
 
 
 class ModelRun(object):
-    def __init__(self, msid, times, vals, inputs):
+    def __init__(self, frames, msid, times, vals, inputs):
         self.msid = msid.lower()
         self.times = times
         self.comp = {self.msid: ModelRunComponent(vals)}
         for key in inputs:
             if key not in pwr_states:
-                self.comp[key] = ModelRunComponent(inputs[key])
+                self.comp[key] = ModelRunComponent(inputs[key][frames:])
+                if key == "sim_z":
+                    self.comp[key].mvals *= -397.7225924607

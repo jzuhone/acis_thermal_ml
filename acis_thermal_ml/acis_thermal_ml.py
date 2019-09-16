@@ -93,10 +93,16 @@ class ACISThermalML(object):
     def get_prediction_data(self, tstart, tstop, T_init, att_data, cmd_states):
         import Ska.Numpy
         times = self._eng_match_times(tstart, tstop, 328.0)
-        print(T_init)
         states = interpolate_states(cmd_states, times)
+        if T_init is None:
+            msid_vals = fetch.MSID(self.msid, tstart, tstop, stat='5min',
+                                   filter_bad=True)
+            msid_vals.interpolate(times=times)
+            msid_vals = msid_vals.vals
+        else:
+            msid_vals = T_init*np.ones_like(times)
         combined_dict = {'msid_times': times,
-                         'msid_vals': T_init*np.ones_like(times),
+                         'msid_vals': msid_vals,
                          'phase': make_phase(times)}
         att_times = att_data.pop("times")
         for key, value in att_data.items(): 
@@ -134,16 +140,9 @@ class ACISThermalML(object):
         self.create_model(self.n_neurons, timesteps, data_dim, self.p_W, self.p_U, 
                           self.weight_decay, self.p_dense)
 
-        # checkpoint path to save weights
-        #checkpointer = callbacks.ModelCheckpoint(filepath=self.checkpoint_path,
-        #                                         verbose=0, save_best_only=True,
-        #                                         save_weights_only=True, mode='min')
-
         history = self.model.fit(train_x, train_y, validation_data=(validate_x, validate_y),
                                  batch_size=self.batch_size, epochs=self.epochs,
                                  shuffle=False, verbose=0)
-
-                                 #callbacks=[checkpointer], shuffle=False, verbose=0)
 
         self.model.save(self.model_path)
 
@@ -190,7 +189,7 @@ class ACISThermalML(object):
         predict_inputs = self.get_prediction_data(tstart, tstop, T_init, 
                                                   att_data, cmd_states)
         predict_times, predict_data = self._predict_model(predict_inputs)
-        return ModelRun(self.msid, predict_times, predict_data, predict_inputs)
+        return ModelRun(self.frames, self.msid, np.array(predict_times), predict_data, predict_inputs)
 
 
     def write_prediction(self, filename, predict_times, predict_data):
