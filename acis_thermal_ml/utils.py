@@ -8,7 +8,7 @@ time2010 = DateTime('2010:001:00:00:00').secs
 secs_per_year = (time2010 - time2000) / 10.0
 
 data_map = {"pitch": "DP_PITCH",
-            "roll": "DP_ROLL",
+            "roll": "ROLL",
             "sim_z": "SIM_Z"}
 
 pwr_states = ["ccd_count", "fep_count", "clocking"]

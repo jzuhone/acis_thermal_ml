@@ -111,7 +111,7 @@ class ACISThermalML(object):
         for key in states.dtype.names:
             if key == "simpos":
                 combined_dict["sim_z"] = -0.0025143153015598743*states["simpos"]
-            elif key in self.inputs:
+            elif key in pwr_states:
                 combined_dict[key] = states[key]
         return pd.DataFrame(combined_dict)
 
