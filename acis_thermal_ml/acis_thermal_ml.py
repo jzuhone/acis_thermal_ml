@@ -75,14 +75,19 @@ class ACISThermalML(object):
     def get_fitting_data(self, start, stop):
         msids = [self.msid] + [data_map[input] for input in self.inputs 
                                if input not in pwr_states]
+        msids += ['solarephem0_{}'.format(ax) for ax in "xyz"]
         data = fetch.MSIDset(msids, start, stop, stat='5min',
                              filter_bad=True)
         data.interpolate(times=data["DP_PITCH"].times)
+        sun_eci = np.array([data['solarephem0_x'].vals,
+                            data['solarephem0_y'].vals,
+                            data['solarephem0_z'].vals])
+        d_sun = np.sqrt((sun_eci**2).sum(axis=0))
         states = self.get_cmd_states(data.datestart, data.datestop, 
                                      data[self.msid].times)
         combined_dict = {'msid_times': data[self.msid].times,
                          'msid_vals': data[self.msid].vals,
-                         'phase': make_phase(data[self.msid].times)}
+                         'phase': d_sun}
         for input in self.inputs:
             if input in data_map:
                 combined_dict[input] = data[data_map[input]].vals
@@ -103,7 +108,7 @@ class ACISThermalML(object):
             msid_vals = T_init*np.ones_like(times)
         combined_dict = {'msid_times': times,
                          'msid_vals': msid_vals,
-                         'phase': make_phase(times)}
+                         'phase': att_data.pop("d_sun")}
         att_times = att_data.pop("times")
         for key, value in att_data.items(): 
             combined_dict[key] = Ska.Numpy.interpolate(value, att_times,
@@ -190,7 +195,6 @@ class ACISThermalML(object):
                                                   att_data, cmd_states)
         predict_times, predict_data = self._predict_model(predict_inputs)
         return ModelRun(self.frames, self.msid, np.array(predict_times), predict_data, predict_inputs)
-
 
     def write_prediction(self, filename, predict_times, predict_data):
         from astropy.table import Table
