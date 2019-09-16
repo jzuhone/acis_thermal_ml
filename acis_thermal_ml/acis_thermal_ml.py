@@ -7,7 +7,6 @@ import numpy as np
 import Ska.engarchive.fetch_sci as fetch
 from Chandra.Time import DateTime, secs2date
 from Chandra.cmd_states import fetch_states, interpolate_states
-from keras import callbacks
 import pickle
 np.random.seed(0)
 
@@ -37,6 +36,17 @@ class ACISThermalML(object):
         self.scaler_msid_file = "{}_scaler_msid.pkl".format(self.msid.lower())
         self.checkpoint_path = 'weights_best_{}_pW_{}_pU_{}_pdense{}'.format(self.msid, p_W, p_U, p_dense)
         self.model_path = 'model_{}.hdf5'.format(self.msid)
+
+    @staticmethod
+    def _eng_match_times(start, stop, dt):
+        """Return an array of times between ``start`` and ``stop`` at ``dt``
+        sec intervals.  The times are roughly aligned (within 1 sec) to the
+        timestamps in the '5min' (328 sec) Ska eng archive data.
+        """
+        time0 = 410270764.0
+        i0 = int((DateTime(start).secs - time0) / dt) + 1
+        i1 = int((DateTime(stop).secs - time0) / dt)
+        return time0 + np.arange(i0, i1) * dt
 
     def create_model(self, n_neurons, timesteps, data_dim, p_W, p_U, weight_decay, p_dense):
         from keras.models import Sequential
@@ -80,18 +90,24 @@ class ACISThermalML(object):
                 combined_dict[input] = states[input]
         return pd.DataFrame(combined_dict)
 
-    def get_prediction_data(self, times, T_init, att_data, cmd_states):
+    def get_prediction_data(self, tstart, tstop, T_init, att_data, cmd_states):
+        import Ska.Numpy
+        times = self._eng_match_times(tstart, tstop, 328.0)
+        print(T_init)
         states = interpolate_states(cmd_states, times)
         combined_dict = {'msid_times': times,
                          'msid_vals': T_init*np.ones_like(times),
                          'phase': make_phase(times)}
-        combined_dict.update(att_data)
+        att_times = att_data.pop("times")
+        for key, value in att_data.items(): 
+            combined_dict[key] = Ska.Numpy.interpolate(value, att_times,
+                                                       times, method="linear")
         for key in states:
             if key == "simpos":
-                combined_dict["sim_z"] = -states["simpos"]/397.7225924607
+                combined_dict["sim_z"] = -0.0025143153015598743*states["simpos"]
             elif key in self.inputs:
                 combined_dict[key] = states[key]
-        return combined_dict
+        return pd.DataFrame(combined_dict)
 
     def train_and_fit_model(self, start, stop):
         train_set = self.get_fitting_data(start, stop)
@@ -171,8 +187,9 @@ class ACISThermalML(object):
         predict_times, predict_data = self._predict_model(predict_inputs)
         return ModelRun(self.msid, predict_times, predict_data, predict_inputs)
 
-    def predict_model(self, times, T_init, att_data, cmd_states):
-        predict_inputs = self.get_prediction_data(times, T_init, att_data, cmd_states)
+    def predict_model(self, tstart, tstop, T_init, att_data, cmd_states):
+        predict_inputs = self.get_prediction_data(tstart, tstop, T_init, 
+                                                  att_data, cmd_states)
         return self._predict_model(predict_inputs)
 
     def write_prediction(self, filename, predict_times, predict_data):
