@@ -102,7 +102,7 @@ class ACISThermalML(object):
         for key, value in att_data.items(): 
             combined_dict[key] = Ska.Numpy.interpolate(value, att_times,
                                                        times, method="linear")
-        for key in states:
+        for key in states.dtype.names:
             if key == "simpos":
                 combined_dict["sim_z"] = -0.0025143153015598743*states["simpos"]
             elif key in self.inputs:
@@ -184,13 +184,14 @@ class ACISThermalML(object):
 
     def test_model(self, start, stop):
         predict_inputs = self.get_fitting_data(start, stop)
-        predict_times, predict_data = self._predict_model(predict_inputs)
-        return ModelRun(self.msid, predict_times, predict_data, predict_inputs)
+        return self._predict_model(predict_inputs)
 
     def predict_model(self, tstart, tstop, T_init, att_data, cmd_states):
         predict_inputs = self.get_prediction_data(tstart, tstop, T_init, 
                                                   att_data, cmd_states)
-        return self._predict_model(predict_inputs)
+        predict_times, predict_data = self._predict_model(predict_inputs)
+        return ModelRun(self.msid, predict_times, predict_data, predict_inputs)
+
 
     def write_prediction(self, filename, predict_times, predict_data):
         from astropy.table import Table
