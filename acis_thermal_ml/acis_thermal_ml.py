@@ -1,11 +1,11 @@
 from acis_thermal_ml import utils as dmf
 from .model_run import ModelRun
-from .utils import make_phase, data_map, \
+from .utils import data_map, \
     pwr_states
 import pandas as pd
 import numpy as np
 import Ska.engarchive.fetch_sci as fetch
-from Chandra.Time import DateTime, secs2date
+from Chandra.Time import DateTime, secs2date, date2secs
 from Chandra.cmd_states import fetch_states, interpolate_states
 import pickle
 np.random.seed(0)
@@ -73,19 +73,21 @@ class ACISThermalML(object):
         return cmd_states
 
     def get_fitting_data(self, start, stop):
-        msids = [self.msid] + [data_map[input] for input in self.inputs 
+        tstart = date2secs(start)
+        tstop = date2secs(stop)
+        times = self._eng_match_times(tstart, tstop, 328.0)
+        msids = [self.msid] + [data_map[input] for input in self.inputs
                                if input not in pwr_states]
         msids += ['solarephem0_{}'.format(ax) for ax in "xyz"]
         data = fetch.MSIDset(msids, start, stop, stat='5min',
                              filter_bad=True)
-        data.interpolate(times=data["DP_PITCH"].times)
+        data.interpolate(times=times)
         sun_eci = np.array([data['solarephem0_x'].vals,
                             data['solarephem0_y'].vals,
                             data['solarephem0_z'].vals])
         d_sun = np.sqrt((sun_eci**2).sum(axis=0))
-        states = self.get_cmd_states(data.datestart, data.datestop, 
-                                     data[self.msid].times)
-        combined_dict = {'msid_times': data[self.msid].times,
+        states = self.get_cmd_states(data.datestart, data.datestop, times)
+        combined_dict = {'msid_times': times,
                          'msid_vals': data[self.msid].vals,
                          'phase': d_sun}
         for input in self.inputs:
@@ -107,9 +109,11 @@ class ACISThermalML(object):
         else:
             msid_vals = T_init*np.ones_like(times)
         combined_dict = {'msid_times': times,
-                         'msid_vals': msid_vals,
-                         'phase': att_data.pop("d_sun")}
+                         'msid_vals': msid_vals}
         att_times = att_data.pop("times")
+        d_sun = Ska.Numpy.interpolate(att_data.pop("d_sun"), att_times,
+                                      times, method="linear")
+        combined_dict['phase'] = d_sun
         for key, value in att_data.items(): 
             combined_dict[key] = Ska.Numpy.interpolate(value, att_times,
                                                        times, method="linear")
@@ -137,15 +141,15 @@ class ACISThermalML(object):
             dmf.split_shaped_data(shaped_train, train_time, self.percentage, begin_int)
         train_x, train_y = dmf.split_io(shaped_train_full, self.frames,
                                         self.n_features)
-        validate_x, validate_y = dmf.split_io(shaped_val_full, self.frames,
-                                              self.n_features)
+        validation_data = dmf.split_io(shaped_val_full, self.frames,
+                                       self.n_features)
 
         # create model
         timesteps, data_dim = train_x.shape[1], train_x.shape[2]
         self.create_model(self.n_neurons, timesteps, data_dim, self.p_W, self.p_U, 
                           self.weight_decay, self.p_dense)
 
-        history = self.model.fit(train_x, train_y, validation_data=(validate_x, validate_y),
+        history = self.model.fit(train_x, train_y, validation_data=validation_data,
                                  batch_size=self.batch_size, epochs=self.epochs,
                                  shuffle=False, verbose=0)
 
