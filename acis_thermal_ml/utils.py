@@ -14,33 +14,23 @@ data_map = {"pitch": "DP_PITCH",
 pwr_states = ["ccd_count", "fep_count", "clocking"]
 
 
-def make_phase(times):
-    # This is the contribution from the variation in the solar
-    # heating due to the Earth's elliptical orbit
-    t_year = (times - time2000) / secs_per_year
-    return np.cos(2.0*np.pi*t_year)
-
-
 def scale_training(train_set, raw_msid_val):
     # normalize data (to be between 0 and 1) and then reshape
     scaler_full = MinMaxScaler()
     scaled = scaler_full.fit_transform(train_set)
-    # creating a seperate scaling for msid_vals cause honestly it's ruining my life
     scaler_msid = MinMaxScaler()
-    scaled_msid_val = scaler_msid.fit_transform(raw_msid_val)
-    # scaled_df = pd.DataFrame(scaled, columns = raw.columns).iloc[::spacing_int,:]
-    scaled_train = pd.DataFrame(scaled, columns=train_set.columns)
-    return scaler_full, scaler_msid, scaled_train
+    _ = scaler_msid.fit_transform(raw_msid_val)
+    return scaler_full, scaler_msid, pd.DataFrame(scaled, columns=train_set.columns)
 
 
 def clean_data(data, cols, pos):
-    #cleaning that needs to occur for all sets(train, validation, test)
-    #first take out any null values with a mask
-    #return the time data and the msid data (the time data is for plotting)
+    # cleaning that needs to occur for all sets (train, validation, test)
+    # first take out any null values with a mask
+    # return the time data and the msid data (the time data is for plotting)
     subset = data[cols]
     mask = [all(tup) for tup in zip(*[~np.isnan(subset['{}'.format(i)]) for i in pos])]
     masked = subset[mask]
-    #seperate out the time data
+    # separate out the time data
     msid_times = masked['msid_times']
     raw_set = masked.drop(['msid_times'], axis=1)
     return raw_set, msid_times
@@ -53,18 +43,18 @@ def clean_data(data, cols, pos):
 def reshape_to_multi_time(data, frames=1):
     col_names = data.columns.values
     cols, names = list(), list()
-    #input sequence (t-n, ... t-1)
+    # input sequence (t-n, ... t-1)
     for i in range(frames, 0, -1):
         cols.append(data.shift(i))
         names += [('%s(t-%d)' % (name,  i)) for name in col_names]
-    #forecast sequence (t, t+1, ... t+n)
+    # forecast sequence (t, t+1, ... t+n)
     for i in range(0,1):
         cols.append(data.shift(-i))
         if i == 0: 
             names += [('%s(t)' % (name)) for name in col_names]
         else:
             names += [('%s(t+%d)' % (name, i)) for name in col_names]
-    #put it all together
+    # put it all together
     agg = pd.concat(cols, axis = 1)
     agg.columns = names
     # drops rows with NaN values

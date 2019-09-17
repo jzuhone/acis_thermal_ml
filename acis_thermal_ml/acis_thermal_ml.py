@@ -1,7 +1,8 @@
-from acis_thermal_ml import utils as dmf
 from .model_run import ModelRun
 from .utils import data_map, \
-    pwr_states
+    pwr_states, clean_data, \
+    scale_training, shaping_data, \
+    split_io, split_shaped_data
 import pandas as pd
 import numpy as np
 import Ska.engarchive.fetch_sci as fetch
@@ -26,7 +27,7 @@ class ACISThermalML(object):
         self.p_U = p_U
         self.p_dense = p_dense
         self.weight_decay = weight_decay
-        self.cols = ['msid_times', 'msid_vals', 'phase'] + self.inputs
+        self.cols = ['msid_times', 'msid_vals', 'd_sun'] + self.inputs
         self.pos = self.cols[2:]
         self.n_features = len(self.pos) + 1
         self.model = None
@@ -89,7 +90,7 @@ class ACISThermalML(object):
         states = self.get_cmd_states(data.datestart, data.datestop, times)
         combined_dict = {'msid_times': times,
                          'msid_vals': data[self.msid].vals,
-                         'phase': d_sun}
+                         'd_sun': d_sun}
         for input in self.inputs:
             if input in data_map:
                 combined_dict[input] = data[data_map[input]].vals
@@ -113,7 +114,7 @@ class ACISThermalML(object):
         att_times = att_data.pop("times")
         d_sun = Ska.Numpy.interpolate(att_data.pop("d_sun"), att_times,
                                       times, method="linear")
-        combined_dict['phase'] = d_sun
+        combined_dict['d_sun'] = d_sun
         for key, value in att_data.items(): 
             combined_dict[key] = Ska.Numpy.interpolate(value, att_times,
                                                        times, method="linear")
@@ -126,23 +127,23 @@ class ACISThermalML(object):
 
     def train_and_fit_model(self, start, stop):
         train_set = self.get_fitting_data(start, stop)
-        train_clean_set, train_time = dmf.clean_data(train_set, self.cols, self.pos)
+        train_clean_set, train_time = clean_data(train_set, self.cols, self.pos)
         raw_msid_val = train_clean_set.drop(self.pos, axis=1)
         scaler_all, scaler_msid, scaled_train = \
-            dmf.scale_training(train_clean_set, raw_msid_val)
+            scale_training(train_clean_set, raw_msid_val)
         self.scaler_all = scaler_all
         with open(self.scaler_all_file, 'wb') as f:
             pickle.dump(self.scaler_all, f)
         self.scaler_msid = scaler_msid
         with open(self.scaler_msid_file, 'wb') as f:
             pickle.dump(self.scaler_msid, f)
-        shaped_train, begin_int = dmf.shaping_data(scaled_train, self.pos, self.frames)
+        shaped_train, begin_int = shaping_data(scaled_train, self.pos, self.frames)
         shaped_train_full, train_time_full, shaped_val_full, val_time_full = \
-            dmf.split_shaped_data(shaped_train, train_time, self.percentage, begin_int)
-        train_x, train_y = dmf.split_io(shaped_train_full, self.frames,
-                                        self.n_features)
-        validation_data = dmf.split_io(shaped_val_full, self.frames,
-                                       self.n_features)
+            split_shaped_data(shaped_train, train_time, self.percentage, begin_int)
+        train_x, train_y = split_io(shaped_train_full, self.frames,
+                                    self.n_features)
+        validation_data = split_io(shaped_val_full, self.frames,
+                                   self.n_features)
 
         # create model
         timesteps, data_dim = train_x.shape[1], train_x.shape[2]
@@ -178,19 +179,19 @@ class ACISThermalML(object):
             self.scaler_all = pickle.load(open(self.scaler_all_file, "rb"))
         if self.scaler_msid is None:
             self.scaler_msid = pickle.load(open(self.scaler_msid_file, "rb"))
-        predict_clean_set, predict_times = dmf.clean_data(predict_inputs, self.cols, self.pos)
+        predict_clean_set, predict_times = clean_data(predict_inputs, self.cols, self.pos)
         predict_scaled_set = pd.DataFrame(self.scaler_all.transform(predict_clean_set),
                                           columns=predict_clean_set.columns)
-        shaped_predict, begin_int_predict = dmf.shaping_data(predict_scaled_set,
-                                                             self.pos, self.frames)
+        shaped_predict, begin_int_predict = shaping_data(predict_scaled_set,
+                                                         self.pos, self.frames)
         predict_times = predict_times[begin_int_predict:]
-        predict_x, _ = dmf.split_io(shaped_predict, self.frames, self.n_features)
+        predict_x, _ = split_io(shaped_predict, self.frames, self.n_features)
         predictions = self.model.predict(predict_x)
         predict_data = np.squeeze(self.scaler_msid.inverse_transform(predictions))
         self.write_prediction("temperatures.dat", predict_times, predict_data)
         return predict_times, predict_data
 
-    def test_model(self, start, stop):
+    def test_model(self, start, stop): 
         predict_inputs = self.get_fitting_data(start, stop)
         return self._predict_model(predict_inputs)
 
