@@ -46,16 +46,16 @@ def reshape_to_multi_time(data, frames=1):
     # input sequence (t-n, ... t-1)
     for i in range(frames, 0, -1):
         cols.append(data.shift(i))
-        names += [('%s(t-%d)' % (name,  i)) for name in col_names]
+        names += [('%s(t-%d)' % (name, i)) for name in col_names]
     # forecast sequence (t, t+1, ... t+n)
     for i in range(0,1):
         cols.append(data.shift(-i))
         if i == 0: 
-            names += [('%s(t)' % (name)) for name in col_names]
+            names += [('%s(t)' % name) for name in col_names]
         else:
             names += [('%s(t+%d)' % (name, i)) for name in col_names]
     # put it all together
-    agg = pd.concat(cols, axis = 1)
+    agg = pd.concat(cols, axis=1)
     agg.columns = names
     # drops rows with NaN values
     agg_full = agg.dropna()
