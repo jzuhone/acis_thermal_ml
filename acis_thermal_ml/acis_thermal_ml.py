@@ -10,7 +10,7 @@ from Chandra.Time import DateTime, secs2date, date2secs
 from Chandra.cmd_states import fetch_states, interpolate_states
 import pickle
 np.random.seed(0)
-
+import Ska.Numpy
 
 class ACISThermalML(object):
     def __init__(self, msid, inputs, frames=8, percentage=0.2, epochs=100, 
@@ -83,13 +83,14 @@ class ACISThermalML(object):
         data = fetch.MSIDset(msids, start, stop, stat='5min',
                              filter_bad=True)
         data.interpolate(times=times)
+        msid_vals = Ska.Numpy.smooth(data[self.msid].vals,10)
         sun_eci = np.array([data['solarephem0_x'].vals,
                             data['solarephem0_y'].vals,
                             data['solarephem0_z'].vals])
         d_sun = np.sqrt((sun_eci**2).sum(axis=0))
         states = self.get_cmd_states(data.datestart, data.datestop, times)
         combined_dict = {'msid_times': times,
-                         'msid_vals': data[self.msid].vals,
+                         'msid_vals': msid_vals,
                          'd_sun': d_sun}
         for input in self.inputs:
             if input in data_map:
@@ -99,7 +100,6 @@ class ACISThermalML(object):
         return pd.DataFrame(combined_dict)
 
     def get_prediction_data(self, tstart, tstop, T_init, att_data, cmd_states):
-        import Ska.Numpy
         times = self._eng_match_times(tstart, tstop, 328.0)
         states = interpolate_states(cmd_states, times)
         if T_init is None:
@@ -115,14 +115,14 @@ class ACISThermalML(object):
         d_sun = Ska.Numpy.interpolate(att_data.pop("d_sun"), att_times,
                                       times, method="linear")
         combined_dict['d_sun'] = d_sun
-        for key, value in att_data.items(): 
-            combined_dict[key] = Ska.Numpy.interpolate(value, att_times,
-                                                       times, method="linear")
-        for key in states.dtype.names:
-            if key == "simpos":
+        for input in self.inputs:
+            if input in att_data:
+                combined_dict[input] = Ska.Numpy.interpolate(att_data[input], att_times,
+                                                             times, method="linear")
+            elif input == "sim_z":
                 combined_dict["sim_z"] = -0.0025143153015598743*states["simpos"]
-            elif key in pwr_states:
-                combined_dict[key] = states[key]
+            elif input in pwr_states:
+                combined_dict[input] = states[input]
         return pd.DataFrame(combined_dict)
 
     def train_and_fit_model(self, start, stop):
@@ -186,10 +186,18 @@ class ACISThermalML(object):
                                                          self.pos, self.frames)
         predict_times = predict_times[begin_int_predict:]
         predict_x, _ = split_io(shaped_predict, self.frames, self.n_features)
-        predictions = self.model.predict(predict_x)
-        predict_data = np.squeeze(self.scaler_msid.inverse_transform(predictions))
-        self.write_prediction("temperatures.dat", predict_times, predict_data)
-        return predict_times, predict_data
+        #predictions = self.model.predict(predict_x)
+        #predict_data = np.squeeze(self.scaler_msid.inverse_transform(predictions))
+        #self.write_prediction("temperatures.dat", predict_times, predict_data)
+        #return predict_times, predict_data
+        T_out = np.zeros_like(predict_times)
+        T_out[0] = predict_clean_set["msid_vals"][begin_int_predict]
+        for i in range(len(predict_x)-1):
+            predictions = self.model.predict(np.array([predict_x[i,:,:]]))
+            predict_x[i+1,:,0] = predictions
+            predict_data = np.squeeze(self.scaler_msid.inverse_transform(predictions))
+            T_out[i+1] = predict_data
+        return predict_times, T_out
 
     def test_model(self, start, stop): 
         predict_inputs = self.get_fitting_data(start, stop)
